@@ -114,7 +114,8 @@ async def show_genres(query, page=1):
     await query.edit_message_text("Твои жанры:", reply_markup=InlineKeyboardMarkup(kb))
 
 # === ПРОСМОТР ЖАНРА ===
-async def view_genlutre(query, cat_id, page=1):
+# === ПРОСМОТР ЖАНРА — РАБОЧАЯ ВЕРСИЯ ДЛЯ СЕРВЕРА ===
+async def view_genre(query, cat_id, page=1):
     per_page = 5
     offset = (page-1)*per_page
     c.execute("SELECT id, file_id, type, caption FROM media WHERE cat_id=? ORDER BY id DESC LIMIT ? OFFSET ?",
@@ -130,22 +131,42 @@ async def view_genlutre(query, cat_id, page=1):
         ]))
         return
 
-    for mid, fid, typ, cap in items[:per_page]:
+    for mid, file_id, typ, cap in items[:per_page]:
         kb = [
             [InlineKeyboardButton("Изменить подпись", callback_data=f"media_cap_{mid}")],
             [InlineKeyboardButton("Удалить", callback_data=f"media_del_{mid}")],
         ]
         caption = cap or "Без подписи"
-        if typ == "photo":
-            await query.message.chat.send_photo(fid, caption=caption, reply_markup=InlineKeyboardMarkup(kb))
-        else:
-            await query.message.chat.send_video(fid, caption=caption, reply_markup=InlineKeyboardMarkup(kb))
 
+        try:
+            # Скачиваем файл и отправляем заново — работает везде!
+            if typ == "photo":
+                file = await query.bot.get_file(file_id)
+                await query.bot.send_photo(
+                    chat_id=query.message.chat_id,
+                    photo=file.file_path,
+                    caption=caption,
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
+            else:  # video
+                file = await query.bot.get_file(file_id)
+                await query.bot.send_video(
+                    chat_id=query.message.chat_id,
+                    video=file.file_path,
+                    caption=caption,
+                    reply_markup=InlineKeyboardMarkup(kb)
+                )
+        except Exception as e:
+            await query.bot.send_message(query.message.chat_id, f"Ошибка при загрузке файла (ID: {mid})")
+
+    # Навигация
     nav = []
-    if page > 1: nav.append(InlineKeyboardButton("Назад", callback_data=f"view_{cat_id}_{page-1}"))
-    if len(items) > per_page: nav.append(InlineKeyboardButton("Вперёд", callback_data=f"view_{cat_id}_{page+1}"))
+    if page > 1:
+        nav.append(InlineKeyboardButton("Назад", callback_data=f"view_{cat_id}_{page-1}"))
+    if len(items) > per_page:
+        nav.append(InlineKeyboardButton("Вперёд", callback_data=f"view_{cat_id}_{page+1}"))
     nav.append(InlineKeyboardButton("К жанру", callback_data=f"genre_{cat_id}"))
-    await query.message.chat.send_message("Навигация:", reply_markup=InlineKeyboardMarkup([nav]))
+    await query.bot.send_message(query.message.chat_id, "Навигация:", reply_markup=InlineKeyboardMarkup([nav]))
 
 # === ТЕКСТ ===
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
