@@ -7,9 +7,9 @@ from telegram.ext import (
     MessageHandler, ContextTypes, filters
 )
 
-TOKEN = "8219762029:AAE4AxNp_lDl-nsmobWcMjeMdtYRFTRFanE"  # ← твой токен
+TOKEN = "8219762029:AAE4AxNp_lDl-nsmobWcMjeMdtYRFTRFanE"
 
-# На серверах файловая система временная → сохраняем БД в /tmp
+# На серверах файловая система временная — сохраняем БД в /tmp
 DB_PATH = "/tmp/archive.db" if os.path.exists("/tmp") else "archive.db"
 
 logging.basicConfig(level=logging.INFO)
@@ -55,7 +55,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await q.edit_message_text("Нет жанров! Создай первый:",
                 reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Создать жанр", callback_data="create_genre")]]))
             return
-        kb = [[InlineKeyboardButton(n, callback_data=f"to_{i")] for i, n in cats]
+        kb = [[InlineKeyboardButton(name, callback_data=f"to_{cat_id}")] for cat_id, name in cats]
         kb.append([InlineKeyboardButton("Отмена", callback_data="main")])
         await q.edit_message_text("Куда добавить?", reply_markup=InlineKeyboardMarkup(kb))
 
@@ -90,21 +90,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         c.execute("DELETE FROM media WHERE id=?", (mid,))
         conn.commit()
         await q.edit_message_text("Удалено!", reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("Назад", callback_data=f"view_{context.user_data.get('cur',1)}_1")]
+            [InlineKeyboardButton("Назад", callback_data=f"view_{context.user_data.get('cur', 1)}_1")]
         ]))
 
     elif data.startswith("genres_"):
-        await show_genres(q, int(data.split("_")[1]))
+        page = int(data.split("_")[1])
+        await show_genres(q, page)
 
 async def show_genres(query, page=1):
     per_page = 8
     offset = (page-1)*per_page
     c.execute("SELECT id, name FROM categories ORDER BY name LIMIT ? OFFSET ?", (per_page+1, offset))
     rows = c.fetchall()
-    kb = [[InlineKeyboardButton(n, callback_data=f"genre_{i}")] for i, n in rows[:per_page]]
+    kb = [[InlineKeyboardButton(name, callback_data=f"genre_{cat_id}")] for cat_id, name in rows[:per_page]]
     nav = []
-    if page > 1: nav.append(InlineKeyboardButton("←", callback_data=f"genres_{page-1}"))
-    if len(rows) > per_page: nav.append(InlineKeyboardButton("→", callback_data=f"genres_{page+1}"))
+    if page > 1: nav.append(InlineKeyboardButton("Назад", callback_data=f"genres_{page-1}"))
+    if len(rows) > per_page: nav.append(InlineKeyboardButton("Вперёд", callback_data=f"genres_{page+1}"))
     if nav: kb.append(nav)
     kb.append([InlineKeyboardButton("Главное", callback_data="main")])
     await query.edit_message_text("Твои жанры:", reply_markup=InlineKeyboardMarkup(kb))
@@ -112,8 +113,7 @@ async def show_genres(query, page=1):
 async def view_genre(query, cat_id, page=1):
     per_page = 5
     offset = (page-1)*per_page
-    c.execute("""SELECT id, file_id, type, caption FROM media 
-                 WHERE cat_id=? ORDER BY id DESC LIMIT ? OFFSET ?""", 
+    c.execute("SELECT id, file_id, type, caption FROM media WHERE cat_id=? ORDER BY id DESC LIMIT ? OFFSET ?",
               (cat_id, per_page+1, offset))
     items = c.fetchall()
     c.execute("SELECT name FROM categories WHERE id=?", (cat_id,))
@@ -127,9 +127,7 @@ async def view_genre(query, cat_id, page=1):
         return
 
     for mid, file_id, typ, cap in items[:per_page]:
-        kb = [
-            [InlineKeyboardButton("Удалить", callback_data=f"del_{mid}")],
-        ]
+        kb = [[InlineKeyboardButton("Удалить", callback_data=f"del_{mid}")]]
         caption = cap or ""
 
         try:
@@ -149,16 +147,15 @@ async def view_genre(query, cat_id, page=1):
                     reply_markup=InlineKeyboardMarkup(kb)
                 )
         except Exception as e:
-            await query.bot.send_message(query.message.chat_id, f"Не удалось загрузить файл :(")
+            await query.bot.send_message(query.message.chat_id, "Не удалось показать файл :(")
 
-    # навигация
     nav = []
     if page > 1:
-        nav.append(InlineKeyboardButton("←", callback_data=f"view_{cat_id}_{page-1}"))
+        nav.append(InlineKeyboardButton("Назад", callback_data=f"view_{cat_id}_{page-1}"))
     if len(items) > per_page:
-        nav.append(InlineKeyboardButton("→", callback_data=f"view_{cat_id}_{page+1}"))
-    nav.append(InlineKeyboardButton("Назад к жанру", callback_data=f"genre_{cat_id}"))
-    await query.bot.send_message(query.message.chat_id, "⬇ Навигация ⬇", reply_markup=InlineKeyboardMarkup([nav]))
+        nav.append(InlineKeyboardButton("Вперёд", callback_data=f"view_{cat_id}_{page+1}"))
+    nav.append(InlineKeyboardButton("К жанру", callback_data=f"genre_{cat_id}"))
+    await query.bot.send_message(query.message.chat_id, "Навигация:", reply_markup=InlineKeyboardMarkup([nav]))
 
 async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("action") == "new_genre":
@@ -167,7 +164,7 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             c.execute("INSERT INTO categories (name) VALUES (?)", (name,))
             conn.commit()
             await update.message.reply_text(f"Жанр «{name}» создан!", reply_markup=main_menu())
-        except:
+        except sqlite3.IntegrityError:
             await update.message.reply_text("Такой жанр уже есть!")
         context.user_data.clear()
 
@@ -175,6 +172,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     cat_id = context.user_data.get("cat")
     if not cat_id:
         return
+
     c.execute("SELECT name FROM categories WHERE id=?", (cat_id,))
     name = c.fetchone()[0]
     caption = update.message.caption
@@ -191,7 +189,7 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     c.execute("INSERT INTO media (cat_id, file_id, type, caption) VALUES (?, ?, ?, ?)",
               (cat_id, file_id, typ, caption))
     conn.commit()
-    await update.message.reply_text(f"Добавлено в «{name}»", reply_markup=main_menu())
+    await update.message.reply_text(f"Добавлено в «{name}»!", reply_markup=main_menu())
     context.user_data.pop("cat", None)
 
 def main():
